@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Urban Pulse AI - Central Transit Command</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0b0f19; color: #f8fafc; height: 100vh;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    header {
+      height: 72px; background: #111827; border-bottom: 1px solid #1f2937;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 22px; flex-shrink: 0;
+    }
+    .brand { display:flex; align-items:center; gap:10px; }
+    .header-title { font-size: 20px; font-weight: 800; }
+    .badge {
+      background: rgba(16,185,129,.18); color:#34d399; border:1px solid rgba(16,185,129,.35);
+      font-size:11px; padding:4px 9px; border-radius:999px; font-weight:700;
+    }
+    .stats-bar { display:flex; gap:9px; flex-wrap:wrap; justify-content:flex-end; }
+    .stat-box {
+      min-width:90px; background:#1f2937; border:1px solid #374151;
+      padding:7px 12px; border-radius:9px; text-align:center;
+    }
+    .stat-label { font-size:9px; color:#9ca3af; text-transform:uppercase; }
+    .stat-val { font-size:15px; font-weight:800; }
+    .main { display:flex; flex:1; min-height:0; }
+    #map { flex:1; min-width:0; background:#0f172a; }
+    aside {
+      width:390px; background:#111827; border-left:1px solid #1f2937;
+      display:flex; flex-direction:column; min-height:0;
+    }
+    .aside-header {
+      padding:14px 16px; border-bottom:1px solid #1f2937;
+      display:flex; justify-content:space-between; align-items:center;
+    }
+    .aside-title { font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; }
+    .controls { padding:12px 16px; border-bottom:1px solid #1f2937; }
+    select, button {
+      background:#1f2937; border:1px solid #374151; color:#f3f4f6;
+      border-radius:8px; padding:8px 10px; font-size:12px; font-weight:600;
+    }
+    select { width:100%; }
+    button { cursor:pointer; }
+    button:hover { background:#374151; }
+    .feed { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:9px; }
+    .event-card { background:#1f2937; border:1px solid #374151; border-radius:9px; padding:12px; font-size:12px; }
+    .event-card.critical { border-color:#ef4444; background:rgba(127,29,29,.20); }
+    .top { display:flex; justify-content:space-between; margin-bottom:7px; }
+    .tag { font-size:10px; font-weight:800; text-transform:uppercase; padding:3px 7px; border-radius:5px; }
+    .tag-traffic { background:#4f46e5; }
+    .tag-road { background:#f59e0b; color:#111827; }
+    .tag-pedestrian { background:#ec4899; }
+    .tag-incident { background:#dc2626; }
+    .tag-other { background:#475569; }
+    .time { color:#9ca3af; font-family:monospace; font-size:10px; }
+    .row { display:flex; justify-content:space-between; gap:12px; color:#9ca3af; margin-top:4px; }
+    .row strong { color:#f3f4f6; }
+    .map-controls { position:absolute; top:86px; right:405px; z-index:1000; }
+    .alert {
+      position:fixed; top:82px; left:50%; transform:translateX(-50%) translateY(-140px);
+      background:#dc2626; color:white; padding:13px 20px; border-radius:9px;
+      font-weight:800; z-index:9999; transition:.35s; box-shadow:0 4px 20px rgba(220,38,38,.45);
+    }
+    .alert.show { transform:translateX(-50%) translateY(0); }
+    .legend {
+      position:absolute; bottom:18px; left:18px; z-index:1000;
+      background:rgba(17,24,39,.94); padding:12px; border-radius:9px; border:1px solid #374151;
+      font-size:11px; line-height:1.8;
+    }
+    .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
+    @media(max-width:900px){
+      aside{width:330px}.map-controls{right:345px}.stats-bar{display:none}
+    }
+  </style>
+</head>
+
+<body>
+  <div id="alert" class="alert">⚠ Critical urban event detected</div>
+
+  <header>
+    <div class="brand">
+      <span class="header-title">Urban Pulse AI</span>
+      <span class="badge">● LIVE EDGE</span>
+    </div>
+
+    <div class="stats-bar">
+      <div class="stat-box"><div class="stat-label">Active Fleet</div><div class="stat-val" id="fleet">0</div></div>
+      <div class="stat-box"><div class="stat-label">Potholes</div><div class="stat-val" id="potholes">0</div></div>
+      <div class="stat-box"><div class="stat-label">Road Issues</div><div class="stat-val" id="road">0</div></div>
+      <div class="stat-box"><div class="stat-label">Traffic</div><div class="stat-val" id="traffic">0</div></div>
+      <div class="stat-box"><div class="stat-label">Pedestrian</div><div class="stat-val" id="pedestrian">0</div></div>
+      <div class="stat-box"><div class="stat-label">Critical</div><div class="stat-val" id="critical">0</div></div>
+      <div class="stat-box"><div class="stat-label">Total Events</div><div class="stat-val" id="total">0</div></div>
+    </div>
+  </header>
+
+  <div class="main">
+    <div id="map"></div>
+
+    <div class="map-controls">
+      <button id="heatBtn" onclick="toggleHeatmap()">Show Heatmap</button>
+    </div>
+
+    <div class="legend">
+      <b>EVENT LEGEND</b><br>
+      <span class="dot" style="background:#ef4444"></span>Pothole<br>
+      <span class="dot" style="background:#f59e0b"></span>Road / Infrastructure<br>
+      <span class="dot" style="background:#6366f1"></span>Traffic<br>
+      <span class="dot" style="background:#ec4899"></span>Pedestrian Risk<br>
+      <span class="dot" style="background:#dc2626"></span>Critical Incident
+    </div>
+
+    <aside>
+      <div class="aside-header">
+        <span class="aside-title">Live Edge Telemetry</span>
+        <button onclick="fetchEvents()">Sync Now</button>
+      </div>
+      <div class="controls">
+        <select id="filter" onchange="renderUI(window.lastEvents || [])">
+          <option value="all">All Events</option>
+          <option value="road">Road / Infrastructure</option>
+          <option value="traffic">Traffic</option>
+          <option value="pedestrian">Pedestrian Risk</option>
+          <option value="incident">Critical Incidents</option>
+          <option value="pothole">Potholes</option>
+        </select>
+      </div>
+      <div id="feed" class="feed">
+        <div style="text-align:center;color:#9ca3af;padding:20px">Connecting to Supabase...</div>
+      </div>
+    </aside>
+  </div>
+
+<script>
+  // IMPORTANT: use only the Supabase Publishable/anon key here.
+  // Never put a Supabase Secret/service-role key in this browser file.
+  const SUPABASE_URL = "https://wvfvnwklkbpczcqtlyfy.supabase.co";
+  const SUPABASE_KEY = "PASTE_YOUR_PUBLISHABLE_KEY_HERE";
+
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  const map = L.map("map").setView([23.1190, 72.6042], 12);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom:19, attribution:"&copy; OpenStreetMap"
+  }).addTo(map);
+
+  const markers = L.layerGroup().addTo(map);
+  let heatLayer = null;
+  let heatVisible = false;
+  window.lastEvents = [];
+
+  function coords(wkt) {
+    if (!wkt || typeof wkt !== "string") return null;
+    const m = wkt.match(/POINT\\s*\\(\\s*([-\\d.]+)\\s+([-\\d.]+)\\s*\\)/i);
+    return m ? [Number(m[2]), Number(m[1])] : null;
+  }
+
+  function category(type) {
+    if (type === "pothole") return "pothole";
+    if (["damaged_road","missing_divider","missing_zebra_crossing","damaged_signboard","waterlogging"].includes(type)) return "road";
+    if (["vehicle_density","traffic_bottleneck"].includes(type)) return "traffic";
+    if (type === "pedestrian_risk") return "pedestrian";
+    if (["incident_rash_driving","incident_hit_and_run"].includes(type)) return "incident";
+    return "other";
+  }
+
+  function markerColor(cat) {
+    return ({pothole:"#ef4444",road:"#f59e0b",traffic:"#6366f1",pedestrian:"#ec4899",incident:"#dc2626",other:"#64748b"})[cat];
+  }
+
+  function showAlert(text) {
+    const el = document.getElementById("alert");
+    el.textContent = "⚠ " + text;
+    el.classList.add("show");
+    setTimeout(() => el.classList.remove("show"), 5000);
+  }
+
+  function renderPins(events) {
+    markers.clearLayers();
+    events.forEach(e => {
+      const c = coords(e.geom_text || e.geom);
+      if (!c) return;
+      const cat = category(e.event_type);
+      L.circleMarker(c, {
+        radius: cat === "pothole" || cat === "incident" ? 8 : 5,
+        fillColor: markerColor(cat), color:"#fff", weight:1.5, fillOpacity:.9
+      }).addTo(markers).bindPopup(`
+        <b>${e.event_type.toUpperCase()}</b><br>
+        Bus: <b>${e.bus_id || "-"}</b><br>
+        Confidence: <b>${((e.confidence || 0)*100).toFixed(0)}%</b><br>
+        Time: ${new Date(e.occurred_at).toLocaleString()}
+      `);
+    });
+  }
+
+  function renderHeatmap(events) {
+    if (heatLayer) map.removeLayer(heatLayer);
+    const points = events.map(e => {
+      if (e.event_type !== "vehicle_density") return null;
+      const c = coords(e.geom_text || e.geom);
+      if (!c) return null;
+      const n = Number(e.metadata?.vehicle_count || 5);
+      return [c[0], c[1], Math.min(1.5, n/20)];
+    }).filter(Boolean);
+    heatLayer = L.heatLayer(points, {radius:35, blur:25, maxZoom:17}).addTo(map);
+  }
+
+  function toggleHeatmap() {
+    heatVisible = !heatVisible;
+    document.getElementById("heatBtn").textContent = heatVisible ? "Show Pins" : "Show Heatmap";
+    if (heatVisible) { markers.clearLayers(); renderHeatmap(window.lastEvents); }
+    else { if (heatLayer) map.removeLayer(heatLayer); renderPins(window.lastEvents); }
+  }
+
+  function renderUI(events) {
+    window.lastEvents = events;
+    const selected = document.getElementById("filter").value;
+    const filtered = selected === "all" ? events : events.filter(e => category(e.event_type) === selected);
+
+    if (heatVisible) renderHeatmap(events); else renderPins(filtered);
+
+    const fleet = new Set(events.map(e => e.bus_id).filter(Boolean));
+    const counts = {pothole:0,road:0,traffic:0,pedestrian:0,incident:0};
+    events.forEach(e => counts[category(e.event_type)]++);
+
+    document.getElementById("fleet").textContent = fleet.size;
+    document.getElementById("potholes").textContent = counts.pothole;
+    document.getElementById("road").textContent = counts.road;
+    document.getElementById("traffic").textContent = counts.traffic;
+    document.getElementById("pedestrian").textContent = counts.pedestrian;
+    document.getElementById("critical").textContent = counts.incident;
+    document.getElementById("total").textContent = events.length;
+
+    const feed = document.getElementById("feed");
+    feed.innerHTML = filtered.length ? "" : '<div style="text-align:center;color:#9ca3af;padding:20px">No events for this filter.</div>';
+
+    filtered.forEach(e => {
+      const cat = category(e.event_type);
+      const critical = cat === "incident";
+      const meta = e.metadata || {};
+      const card = document.createElement("div");
+      card.className = "event-card" + (critical ? " critical" : "");
+      card.innerHTML = `
+        <div class="top">
+          <span class="tag tag-${cat}">${e.event_type.replaceAll("_"," ")}</span>
+          <span class="time">${new Date(e.occurred_at).toLocaleTimeString()}</span>
+        </div>
+        <div class="row"><span>Bus</span><strong>${e.bus_id || "-"}</strong></div>
+        <div class="row"><span>Confidence</span><strong>${((e.confidence || 0)*100).toFixed(0)}%</strong></div>
+        ${meta.vehicle_count !== undefined ? `<div class="row"><span>Vehicle Count</span><strong>${meta.vehicle_count}</strong></div>` : ""}
+        ${meta.traffic_density ? `<div class="row"><span>Density</span><strong>${meta.traffic_density}</strong></div>` : ""}
+      `;
+      feed.appendChild(card);
+    });
+
+    if (events.length) {
+      const newest = events[0];
+      if (["incident_rash_driving","incident_hit_and_run"].includes(newest.event_type))
+        showAlert("INCIDENT — " + newest.event_type.replaceAll("_"," ").toUpperCase());
+    }
+  }
+
+  async function fetchEvents() {
+    const {data, error} = await sb.from("events_with_coords")
+      .select("*").order("occurred_at", {ascending:false}).limit(100);
+
+    if (error) {
+      document.getElementById("feed").innerHTML =
+        `<div style="color:#f87171;padding:15px">Supabase error: ${error.message}</div>`;
+      return;
+    }
+    renderUI(data || []);
+  }
+
+  sb.channel("urban-pulse-events")
+    .on("postgres_changes", {event:"INSERT", schema:"public", table:"events"}, fetchEvents)
+    .subscribe();
+
+  fetchEvents();
+  setInterval(fetchEvents, 5000);
+  setTimeout(() => map.invalidateSize(), 400);
+</script>
+</body>
+</html>
